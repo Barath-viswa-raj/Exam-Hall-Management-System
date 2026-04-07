@@ -1,0 +1,256 @@
+
+# import streamlit as st
+# import pandas as pd
+# import sqlite3
+# import os
+# import io
+# import random
+# import time
+
+# # ReportLab setup
+# try:
+#     from reportlab.lib.pagesizes import A4
+#     from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
+#     from reportlab.lib import colors
+#     from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+#     REPORTLAB_AVAILABLE = True
+# except ImportError:
+#     REPORTLAB_AVAILABLE = False
+
+# # --- DATABASE SETUP ---
+# DB_NAME = "exam_management.db"
+
+# def init_db():
+#     with sqlite3.connect(DB_NAME) as conn:
+#         cursor = conn.cursor()
+#         cursor.execute("""
+#             CREATE TABLE IF NOT EXISTS students (
+#                 register_no TEXT PRIMARY KEY,
+#                 name TEXT,
+#                 department TEXT,
+#                 subject TEXT,
+#                 year INTEGER,
+#                 hall_no INTEGER,
+#                 seat_no INTEGER
+#             )
+#         """)
+#         cursor.execute("""
+#             CREATE TABLE IF NOT EXISTS invigilators (
+#                 staff_id TEXT PRIMARY KEY,
+#                 staff_name TEXT,
+#                 assigned_hall INTEGER
+#             )
+#         """)
+#         conn.commit()
+
+# # --- SEATING LOGIC ---
+# def generate_dynamic_seating(df, h_cap, cols, start_idx=0):
+#     df.columns = [c.lower().strip().replace(' ', '_') for c in df.columns]
+#     if 'sem' in df.columns:
+#         df = df.rename(columns={'sem': 'year'})
+#     df = df.dropna(subset=['register_no', 'subject']).drop_duplicates(subset=['register_no'])
+#     groups = {sub: list(group.to_dict('records')) for sub, group in df.groupby('subject')}
+#     final_layout = []
+
+#     def get_sub_at(idx):
+#         return final_layout[idx]['subject'] if 0 <= idx < len(final_layout) else None
+
+#     while any(groups.values()):
+#         curr_idx = len(final_layout)
+#         total_pos = start_idx + curr_idx
+#         left_sub = get_sub_at(curr_idx - 1) if total_pos % cols != 0 else None
+#         front_sub = get_sub_at(curr_idx - cols)
+#         available_subs = sorted([s for s in groups if groups[s]], key=lambda x: len(groups[x]), reverse=True)
+#         placed = False
+#         for sub in available_subs:
+#             if sub != left_sub and sub != front_sub:
+#                 final_layout.append(groups[sub].pop(0))
+#                 placed = True
+#                 break
+#         if not placed:
+#             final_layout.append({'register_no': f'GAP_{total_pos+1}', 'name': 'EMPTY', 'department': '-', 'subject': 'EMPTY_GAP', 'year': 0})
+
+#     for i, entry in enumerate(final_layout):
+#         actual_pos = start_idx + i
+#         entry['seat_no'] = actual_pos + 1
+#         entry['hall_no'] = (actual_pos // h_cap) + 1
+#     return pd.DataFrame(final_layout)
+
+# # --- PDF GENERATOR ---
+# def generate_staff_pdf(df):
+#     buffer = io.BytesIO()
+#     doc = SimpleDocTemplate(buffer, pagesize=A4)
+#     elements = []
+#     styles = getSampleStyleSheet()
+#     elements.append(Paragraph("<b>Exam Invigilation Duty Chart</b>", styles['Title']))
+#     data = [["Staff ID", "Staff Name", "Assigned Hall"]]
+#     for _, row in df.iterrows():
+#         data.append([str(row['staff_id']), row['staff_name'], f"Hall {row['assigned_hall']}"])
+#     t = Table(data, colWidths=[100, 250, 100])
+#     t.setStyle(TableStyle([('GRID', (0,0), (-1,-1), 0.5, colors.black), ('BACKGROUND',(0,0),(-1,0), colors.darkblue), ('TEXTCOLOR',(0,0),(-1,0), colors.whitesmoke), ('ALIGN', (0,0), (-1,-1), 'CENTER')]))
+#     elements.append(t); doc.build(elements); buffer.seek(0)
+#     return buffer
+
+# def generate_hall_pdf(df):
+#     buffer = io.BytesIO()
+#     doc = SimpleDocTemplate(buffer, pagesize=A4)
+#     elements = []
+#     styles = getSampleStyleSheet()
+#     cell_style = ParagraphStyle(name='CellStyle', fontSize=8, leading=10, alignment=1)
+    
+#     halls = sorted(df['hall_no'].unique())
+#     for hall in halls:
+#         elements.append(Paragraph(f"<b>Hall No : {hall} Seating Chart</b>", styles['Title']))
+#         hall_data = df[(df['hall_no'] == hall) & (df['subject'] != 'EMPTY_GAP')]
+#         deps = ", ".join(sorted(hall_data['department'].unique().astype(str).tolist()))
+#         yrs = ", ".join(sorted([str(y) for y in hall_data['year'].unique()]))
+#         summary = f"<b>Departments:</b> {deps} | <b>Years:</b> {yrs}"
+#         elements.append(Paragraph(summary, styles['Normal']))
+#         elements.append(Spacer(1, 10))
+#         data = [["Seat", "Reg No", "Name", "Subject", "Year", "Dept"]]
+#         for _, row in hall_data.iterrows():
+#             data.append([row['seat_no'], row['register_no'], Paragraph(str(row['name']), cell_style), Paragraph(str(row['subject']), cell_style), row['year'], Paragraph(str(row['department']), cell_style)])
+#         t = Table(data, colWidths=[35, 75, 130, 130, 35, 80], repeatRows=1)
+#         t.setStyle(TableStyle([('GRID', (0,0), (-1,-1), 0.5, colors.black), ('VALIGN', (0,0), (-1,-1), 'MIDDLE'), ('ALIGN', (0,0), (-1,-1), 'CENTER'), ('BACKGROUND', (0,0), (-1,0), colors.lightgrey)]))
+#         elements.append(t); elements.append(Spacer(1, 40))
+#     doc.build(elements); buffer.seek(0)
+#     return buffer
+
+# # --- UI CONFIG ---
+# st.set_page_config(page_title="NexGen Exam Manager", layout="wide")
+# init_db()
+
+# COLLEGE_LOGO = "image_1eff82.jpg" 
+# SIDEBAR_LOGO = "download.png"
+
+# st.markdown("""
+# <style>
+#     .stApp { background-color: #0d1117; color: white; }
+#     .seat-card { background-color: #161b22; border: 1px solid #30363d; border-radius: 10px; text-align: center; height: 230px; margin-bottom: 20px; }
+#     .seat-header { background-color: #1f2937; color: #58a6ff; font-weight: bold; padding: 8px; border-radius: 10px 10px 0 0; border-bottom: 1px solid #30363d; }
+#     .student-name { color: #ffffff; font-weight: bold; margin-top: 10px; font-size: 1.1rem; }
+#     .sub-text { color: #8b949e; font-size: 0.9rem; margin-top: 5px; }
+#     .reg-text { color: #238636; font-size: 0.95rem; font-weight: bold; margin-top: 5px; }
+#     .year-text { color: #e3b341; font-size: 0.9rem; font-weight: bold; }
+#     .gap-card { background-color: #0d1117; border: 1px dashed #f85149; border-radius: 10px; height: 230px; display: flex; align-items: center; justify-content: center; color: #f85149; }
+# </style>
+# """, unsafe_allow_html=True)
+
+# with st.sidebar:
+#     if os.path.exists(SIDEBAR_LOGO): st.image(SIDEBAR_LOGO, use_container_width=True)
+#     menu = st.radio("Navigation", ["🛡️ Admin Portal", "🧑‍🏫 Teacher View", "🔍 Student Search"])
+
+# if menu == "🛡️ Admin Portal":
+#     pwd = st.sidebar.text_input("Access Key", type="password")
+#     if pwd == "admin123":
+#         if os.path.exists(COLLEGE_LOGO): st.image(COLLEGE_LOGO, width=120)
+#         st.header("Admin Seating & Staff Control")
+#         c1, c2 = st.columns(2)
+#         h_cap = c1.number_input("Hall Capacity", 1, 1000, 25)
+#         row_w = c2.number_input("Seats per Row", 2, 12, 5)
+        
+#         file = st.file_uploader("Upload Student Excel", type=['xlsx'])
+#         if file:
+#             if st.button("➕ Process/Update Students"):
+#                 df_raw = pd.read_excel(file)
+#                 df_raw.columns = [c.lower().strip().replace(' ', '_') for c in df_raw.columns]
+                
+#                 # Register Number Primary Key Check
+#                 with sqlite3.connect(DB_NAME) as conn:
+#                     existing_regs = pd.read_sql_query("SELECT register_no FROM students", conn)['register_no'].astype(str).tolist()
+                
+#                 new_regs = df_raw['register_no'].astype(str).tolist()
+#                 dupes = [r for r in new_regs if r in existing_regs]
+
+#                 if dupes:
+#                     st.error(f"❌ Error: Register Number(s) {', '.join(dupes[:3])} already exist! Please wipe data or check file.")
+#                 else:
+#                     new_students = df_raw.to_dict('records')
+#                     with sqlite3.connect(DB_NAME) as conn:
+#                         gaps = pd.read_sql_query("SELECT seat_no FROM students WHERE subject = 'EMPTY_GAP' ORDER BY seat_no", conn)
+#                         gap_list = gaps['seat_no'].tolist()
+#                         to_append, filled = [], 0
+#                         for student in new_students:
+#                             if filled < len(gap_list):
+#                                 s_no = gap_list[filled]
+#                                 conn.execute("UPDATE students SET register_no=?, name=?, department=?, subject=?, year=? WHERE seat_no=?", (str(student['register_no']), student['name'], student['department'], student['subject'], student.get('year', 1), s_no))
+#                                 filled += 1
+#                             else: to_append.append(student)
+#                         if to_append:
+#                             last_seat = conn.execute("SELECT MAX(seat_no) FROM students").fetchone()[0] or 0
+#                             processed = generate_dynamic_seating(pd.DataFrame(to_append), h_cap, row_w, start_idx=last_seat)
+#                             processed.to_sql('students', conn, if_exists='append', index=False)
+#                         conn.commit(); st.success(f"Gaps Filled: {filled} | New Added: {len(to_append)}"); time.sleep(1); st.rerun()
+
+#         st.divider()
+#         w1, w2 = st.columns(2)
+#         if w1.button("🔴 Wipe Student Data"):
+#             with sqlite3.connect(DB_NAME) as conn: conn.execute("DELETE FROM students")
+#             st.warning("🗑️ Student data wiped successfully!")
+#             time.sleep(1); st.rerun()
+#         if w2.button("🟠 Wipe Staff Data"):
+#             with sqlite3.connect(DB_NAME) as conn: conn.execute("DELETE FROM invigilators")
+#             st.warning("🗑️ Staff data wiped successfully!")
+#             time.sleep(1); st.rerun()
+
+#         # --- STAFF ALLOCATION ---
+#         with sqlite3.connect(DB_NAME) as conn:
+#             staff_count = conn.execute("SELECT COUNT(*) FROM invigilators").fetchone()[0]
+#         st.subheader("👨‍🏫 Staff Allocation")
+#         if staff_count == 0:
+#             staff_file = st.file_uploader("Upload Staff Excel", type=['xlsx'])
+#             if staff_file and st.button("🔄 Allocate Staff"):
+#                 staff_df = pd.read_excel(staff_file)
+#                 staff_df.columns = [c.lower().strip() for c in staff_df.columns]
+                
+#                 # Check for duplicate Staff IDs in uploaded file
+#                 if staff_df['staff_id'].duplicated().any():
+#                     st.error("❌ Error: Duplicate Staff IDs found in the Excel file.")
+#                 else:
+#                     with sqlite3.connect(DB_NAME) as conn:
+#                         hall_data = pd.read_sql_query("SELECT hall_no, GROUP_CONCAT(DISTINCT department) as hall_depts FROM students GROUP BY hall_no", conn)
+#                         h_list, s_pool = hall_data.to_dict('records'), staff_df.to_dict('records')
+#                         random.shuffle(s_pool)
+#                         final_allocs, assigned_ids = [], set()
+#                         for hall in h_list:
+#                             h_depts = [d.strip().upper() for d in str(hall['hall_depts']).split(',')]
+#                             selected = next((s for s in s_pool if str(s['staff_id']) not in assigned_ids and str(s['department']).strip().upper() not in h_depts), None)
+#                             if not selected: selected = next((s for s in s_pool if str(s['staff_id']) not in assigned_ids), None)
+#                             if selected:
+#                                 assigned_ids.add(str(selected['staff_id']))
+#                                 final_allocs.append((str(selected['staff_id']), selected['staff_name'], int(hall['hall_no'])))
+#                         conn.executemany("INSERT INTO invigilators (staff_id, staff_name, assigned_hall) VALUES (?, ?, ?)", final_allocs)
+#                         conn.commit(); st.success("Staff Allocated!"); time.sleep(1); st.rerun()
+#         else: st.info("✅ Staff already allocated.")
+
+#         with sqlite3.connect(DB_NAME) as conn:
+#             sf_list = pd.read_sql_query("SELECT * FROM invigilators", conn)
+#             st_list = pd.read_sql_query("SELECT * FROM students", conn)
+#             if not sf_list.empty: st.download_button("📄 Download Staff PDF", generate_staff_pdf(sf_list), "Staff_Duty.pdf")
+#             if not st_list.empty: st.download_button("📄 Download Seating PDF", generate_hall_pdf(st_list), "Seating_Plan.pdf")
+
+# elif menu == "🧑‍🏫 Teacher View":
+#     with sqlite3.connect(DB_NAME) as conn:
+#         halls_df = pd.read_sql_query("SELECT DISTINCT hall_no FROM students ORDER BY hall_no", conn)
+#     if not halls_df.empty:
+#         sel_h = st.selectbox("Select Hall No", halls_df['hall_no'].tolist())
+#         display_cols = st.slider("Seats per Row", 2, 12, 5)
+#         with sqlite3.connect(DB_NAME) as conn:
+#             data = pd.read_sql_query("SELECT * FROM students WHERE hall_no = ? ORDER BY seat_no", conn, params=(sel_h,))
+#         rows = (len(data)//display_cols) + (1 if len(data)%display_cols > 0 else 0)
+#         for r in range(rows):
+#             cols_grid = st.columns(display_cols)
+#             for c in range(display_cols):
+#                 idx = r * display_cols + c
+#                 if idx < len(data):
+#                     s = data.iloc[idx]
+#                     if s['subject'] == "EMPTY_GAP": cols_grid[c].markdown('<div class="gap-card">GAP</div>', unsafe_allow_html=True)
+#                     else: cols_grid[c].markdown(f"""<div class="seat-card"><div class="seat-header">Seat {s['seat_no']}</div><div class="student-name">{s['name']}</div><div class="sub-text">{s['subject']}</div><div class="year-text">Year: {s['year']}</div><div class="sub-text" style="font-size:0.8rem;">{s['department']}</div><div class="reg-text">{s['register_no']}</div></div>""", unsafe_allow_html=True)
+
+# elif menu == "🔍 Student Search":
+#     reg = st.text_input("Register Number")
+#     if reg:
+#         with sqlite3.connect(DB_NAME) as conn:
+#             res = pd.read_sql_query("SELECT * FROM students WHERE register_no = ?", conn, params=(reg,))
+#         if not res.empty: st.success(f"Found: {res.iloc[0]['name']} | Hall: {res.iloc[0]['hall_no']} | Seat: {res.iloc[0]['seat_no']}")
+#         else: st.error("Student Not Found")
